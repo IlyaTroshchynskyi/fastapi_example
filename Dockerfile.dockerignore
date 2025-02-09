@@ -1,0 +1,7 @@
+.github/
+tests/
+.flake8
+.gitignore
+*.env
+docker-compose.yaml
+README.md

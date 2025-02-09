@@ -1,0 +1,24 @@
+version: "3.8"
+
+services:
+  backend-database:
+    image: postgres
+    volumes:
+      - postgres:/var/lib/postgresql/example-data/
+    environment:
+      - "POSTGRES_USER=postgres"
+      - "POSTGRES_PASSWORD=postgres"
+      - "POSTGRES_DB=example"
+    ports:
+      - "5436:5432"
+  backend-test-database:
+    image: postgres
+    environment:
+      - "POSTGRES_USER=test_postgres"
+      - "POSTGRES_PASSWORD=test_postgres"
+      - "POSTGRES_DB=example-test"
+    ports:
+      - "5437:5432"
+
+volumes:
+  postgres:

@@ -1,0 +1,58 @@
+[tool.poetry]
+name = "fastapi-example"
+version = "0.1.0"
+description = ""
+authors = ["Illia Troshchynskyi <illia.troshchynskyi@nixs.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+fastapi = {extras = ["standard"], version = "^0.115.6"}
+pydantic-settings = "^2.7.1"
+psycopg = "^3.2.4"
+alembic = "^1.14.0"
+python-multipart = "^0.0.20"
+fastapi-pagination = "^0.12.34"
+
+
+[tool.poetry.group.dev.dependencies]
+pre-commit = "^4.0.1"
+coverage = "^7.6.10"
+pytest = "^8.3.4"
+pytest-asyncio = "^0.25.2"
+pytest-mock = "^3.14.0"
+pytest-httpx = "^0.35.0"
+polyfactory = "^2.18.1"
+ruff = "^0.9.2"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [".venv"]
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+
+[tool.ruff.lint]
+select = [
+    "E", # Errors
+    "F", # Pyflakes
+    "I", # isort
+    "T20", # flake8-print
+]
+pydocstyle.convention = 'google'
+
+[tool.ruff.lint.isort]
+known-local-folder = ["tests", "app", "scripts"]
+split-on-trailing-comma = true
+combine-as-imports = true
+case-sensitive = false
+detect-same-package = true
+order-by-type = false  # Sorting of all imported objects (functions, classes, etc.) regardless of their type
+force-sort-within-sections = true  # Don't sort straight-style imports before from-style imports.
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
