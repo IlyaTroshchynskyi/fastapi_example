@@ -22,7 +22,7 @@ def pytest_configure(config: pytest.Config):
     file after command line options have been parsed.
     """
     os.environ['ENVIRONMENT'] = 'dev'
-    os.environ['DATABASE_URL'] = 'postgresql+psycopg://test_postgres:test_postgres@localhost:5433/BackendMGME-test'
+    os.environ['DATABASE_URL'] = 'postgresql+psycopg://test_postgres:test_postgres@localhost:5437/example-test'
 
     os.environ['AWS_ACCESS_KEY_ID'] = 'key'
     os.environ['AWS_SECRET_ACCESS_KEY'] = 'key'

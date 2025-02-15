@@ -1,0 +1,3 @@
+class S3Storage:
+    def __init__(self):
+        ...
