@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import Base, get_session
 from app.core.exceptions import NotFoundError
 
-
 ModelType = TypeVar('ModelType', bound=Base, covariant=True)
 ReadSchemaType = TypeVar('ReadSchemaType', bound=BaseModel)
 CreateSchemaType = TypeVar('CreateSchemaType', bound=BaseModel)
