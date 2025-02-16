@@ -2,8 +2,8 @@ from pydantic import TypeAdapter
 
 from app.apps.genres.schemas import GenreSchema
 from tests.conftest import TestBaseClientDBClass
-from tests.factory_models.factories import GenreCreationFactory
 from tests.factory_helpers.factories_creators import create_genres_factory
+from tests.factory_models.factories import GenreCreationFactory
 
 
 class TestGetGenres(TestBaseClientDBClass):
