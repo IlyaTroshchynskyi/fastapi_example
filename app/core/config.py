@@ -18,6 +18,11 @@ class Settings(BaseSettings):
     AWS_SECRET_ACCESS_KEY: str
     AWS_DEFAULT_REGION: str
 
+    S3_BUCKET: str
+    LOCAL_AWS_ACCESS_KEY_ID: str = 'access_key'
+    LOCAL_AWS_SECRET_ACCESS_KEY: str = 'secret_key'
+    S3_LOCAL_HOST: str = 'http://127.0.0.1:9000'
+
     RUN_MIGRATIONS: bool = False
 
     model_config = SettingsConfigDict(

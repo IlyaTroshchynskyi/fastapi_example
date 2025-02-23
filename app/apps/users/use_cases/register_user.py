@@ -1,4 +1,3 @@
-
 from fastapi import Depends
 
 from app.apps.users.schemas import UserCreateSchema, UserSchema

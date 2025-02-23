@@ -1,14 +1,18 @@
 from asyncio import DefaultEventLoopPolicy
 import os
 import pathlib
-from typing import AsyncIterable
+from typing import AsyncIterable, AsyncGenerator, Generator
 
 from alembic.command import downgrade, upgrade
+from botocore.exceptions import ClientError
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine, AsyncSession, create_async_engine
+from testcontainers.minio import MinioContainer
+from types_aiobotocore_s3 import S3Client
 
+from app.core.aws_boto_clients import get_aioboto_session, open_s3_client
 from app.core.config import get_settings
 from tests.dependencies import override_app_test_dependencies, override_dependency
 
@@ -27,6 +31,11 @@ def pytest_configure(config: pytest.Config):
     os.environ['AWS_ACCESS_KEY_ID'] = 'key'
     os.environ['AWS_SECRET_ACCESS_KEY'] = 'key'
     os.environ['AWS_DEFAULT_REGION'] = 'eu-central-1'
+
+    os.environ['S3_LOCAL_HOST'] = 'http://127.0.0.1:9000'
+    os.environ['S3_BUCKET'] = 'test'
+    os.environ['LOCAL_AWS_ACCESS_KEY_ID'] = 'access_key'
+    os.environ['LOCAL_AWS_SECRET_ACCESS_KEY'] = 'secret_key'
 
 
 @pytest.fixture(scope='session')
@@ -136,3 +145,31 @@ class TestBaseClientClass:
 
 class TestBaseClientDBClass(TestBaseClientClass, TestBaseDBClass):
     """Provides Test Class with loaded database and client fixture"""
+
+
+async def delete_all_objects(s3: S3Client, bucket_name: str):
+    response = await s3.list_objects_v2(Bucket=bucket_name)
+    if 'Contents' in response:
+        objects = [{'Key': obj['Key']} for obj in response['Contents']]
+        await s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})
+
+
+@pytest.fixture(scope='session')
+def s3_instance() -> Generator[MinioContainer]:
+    with MinioContainer(access_key='access_key', secret_key='access_key') as minio:
+        minio_client = minio.get_client()
+        minio_client.make_bucket(os.environ['S3_BUCKET'])
+        yield minio
+
+
+@pytest.fixture(scope='function')
+async def s3_client(s3_instance) -> AsyncGenerator[S3Client]:
+    session = get_aioboto_session()
+    async with (
+        open_s3_client(session=session, settings=get_settings()) as s3_client,
+    ):
+        try:
+            await delete_all_objects(s3_client, os.environ['S3_BUCKET'])
+        except ClientError:
+            pass
+        yield s3_client
