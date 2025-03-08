@@ -155,7 +155,7 @@ async def delete_all_objects(s3: S3Client, bucket_name: str):
 
 
 @pytest.fixture(scope='session')
-def s3_instance() -> Generator[MinioContainer]:
+def s3_instance() -> Generator[MinioContainer, None, None]:
     with MinioContainer(access_key='access_key', secret_key='access_key') as minio:
         minio_client = minio.get_client()
         minio_client.make_bucket(os.environ['S3_BUCKET'])
@@ -163,7 +163,7 @@ def s3_instance() -> Generator[MinioContainer]:
 
 
 @pytest.fixture(scope='function')
-async def s3_client(s3_instance) -> AsyncGenerator[S3Client]:
+async def s3_client(s3_instance) -> AsyncGenerator[S3Client, None]:
     session = get_aioboto_session()
     async with (
         open_s3_client(session=session, settings=get_settings()) as s3_client,
