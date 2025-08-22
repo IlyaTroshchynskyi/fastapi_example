@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     LOCAL_AWS_SECRET_ACCESS_KEY: str = 'secret_key'
     S3_LOCAL_HOST: str = 'http://127.0.0.1:9000'
 
+    MQ_URL: str
+    MQ_QUEUE_NAME: str
+    MQ_EXCHANGE_NAME: str
+    MQ_DLQ_NAME: str
+
     RUN_MIGRATIONS: bool = False
 
     model_config = SettingsConfigDict(

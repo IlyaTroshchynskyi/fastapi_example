@@ -21,6 +21,7 @@ class TestGetGenres(TestBaseClientDBClass):
 class TestCreateGenres(TestBaseClientDBClass):
     async def test_success(self) -> None:
         genre_fc = GenreCreationFactory.build()
+
         response = await self.member_client.post('/genres', json=genre_fc.model_dump())
 
         assert response.status_code == 201
@@ -31,6 +32,7 @@ class TestGetByIdGenres(TestBaseClientDBClass):
     async def test_success(self) -> None:
         genre1 = await create_genres_factory(self.session)
         await create_genres_factory(self.session)
+
         response = await self.member_client.get(f'/genres/{genre1.id}')
 
         assert response.status_code == 200
@@ -47,6 +49,7 @@ class TestUpdateByIdGenres(TestBaseClientDBClass):
     async def test_success(self) -> None:
         genre1 = await create_genres_factory(self.session)
         await create_genres_factory(self.session)
+
         response = await self.member_client.put(f'/genres/{genre1.id}', json={'name': 'new'})
 
         assert response.status_code == 200
@@ -55,6 +58,7 @@ class TestUpdateByIdGenres(TestBaseClientDBClass):
     async def test_already_exists(self) -> None:
         genre1 = await create_genres_factory(self.session)
         await create_genres_factory(self.session)
+
         response = await self.member_client.put(f'/genres/{genre1.id}', json={'name': genre1.name})
 
         assert response.status_code == 409
