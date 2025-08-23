@@ -1,6 +1,6 @@
-from asyncio import DefaultEventLoopPolicy
 import os
 import pathlib
+from asyncio import DefaultEventLoopPolicy
 from typing import AsyncGenerator, Generator
 from unittest.mock import AsyncMock
 
@@ -122,6 +122,7 @@ def event_loop_policy(request: pytest.FixtureRequest) -> DefaultEventLoopPolicy:
     return request.param
 
 
+
 class TestBaseDBClass:
     """Provides Test Class with a loaded database fixture"""
 
@@ -170,7 +171,7 @@ def s3_instance() -> Generator[MinioContainer, None, None]:
         yield minio
 
 
-@pytest.fixture(scope='session')
+@pytest.fixture(scope='function')
 async def s3_client(s3_instance: MinioContainer) -> AsyncGenerator[S3Client, None]:
     # Get the dynamic connection configuration from the running container
     port = s3_instance.get_exposed_port(9000)
