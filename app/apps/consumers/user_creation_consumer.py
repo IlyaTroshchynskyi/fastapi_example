@@ -19,7 +19,7 @@ router = RabbitRouter(get_settings().MQ_URL)
 
 
 @router.subscriber(q_test, get_user_creation_exchange())
-async def handle_user_creation_msg(body: UserCreationMsg, msg: RabbitMessage):
+async def handle_user_creation_msg(body: UserCreationMsg, msg: RabbitMessage) -> None:
     raw: IncomingMessage = msg.raw_message
     logger.info('[EMAIL] Received message: %r (delivery_tag=%s)', body, raw.delivery_tag)
 
@@ -38,11 +38,11 @@ async def handle_user_creation_msg(body: UserCreationMsg, msg: RabbitMessage):
 
 
 @router.after_startup
-async def setup_infrastructure(_):
+async def setup_infrastructure(_: RabbitBroker) -> None:
     await declare_queue(router.broker)
 
 
-async def declare_queue(broker: RabbitBroker):
+async def declare_queue(broker: RabbitBroker) -> None:
     await broker.declare_exchange(get_user_creation_exchange())
     await broker.declare_queue(q_test)
     await broker.declare_queue(dlq_q_test)

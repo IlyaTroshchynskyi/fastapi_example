@@ -144,3 +144,4 @@ cython_debug/
 
 # Ruff
 .ruff_cache
+mypy-report

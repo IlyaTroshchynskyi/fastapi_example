@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 from app.apps.consumers.schemas import UserCreationMsg, UserCreationStatus
 from app.apps.users.schemas import UserSchema
 from tests.conftest import TestBaseClientDBClass
@@ -5,7 +7,7 @@ from tests.factory_models.factories import UserCreationFactory
 
 
 class TestCreateUsers(TestBaseClientDBClass):
-    async def test_success(self, mock_broker) -> None:
+    async def test_success(self, mock_broker: AsyncMock) -> None:
         user_fc = UserCreationFactory.build()
 
         response = await self.member_client.post('/users', json=user_fc.model_dump())

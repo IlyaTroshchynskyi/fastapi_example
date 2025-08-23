@@ -15,14 +15,14 @@ from testcontainers.minio import MinioContainer
 from types_aiobotocore_s3 import S3Client
 
 from app.core.aws_boto_clients import get_aioboto_session, open_s3_client
-from app.core.config import get_settings
+from app.core.config import get_settings, Settings
 from app.core.infrastructure.brokers.dependencies import get_rabbit_broker
 from tests.dependencies import override_app_test_dependencies, override_dependency
 
 TEST_HOST = 'http://test'
 
 
-def pytest_configure(config: pytest.Config):
+def pytest_configure(config: pytest.Config) -> None:
     """
     Allows plugins and conftest files to perform initial configuration.
     This hook is called for every plugin and initial conftest
@@ -38,7 +38,7 @@ def pytest_configure(config: pytest.Config):
     os.environ['S3_LOCAL_HOST'] = 'http://127.0.0.1:9000'
     os.environ['S3_BUCKET'] = 'test'
     os.environ['LOCAL_AWS_ACCESS_KEY_ID'] = 'access_key'
-    os.environ['LOCAL_AWS_SECRET_ACCESS_KEY'] = 'secret_key'
+    os.environ['LOCAL_AWS_SECRET_ACCESS_KEY'] = 'access_key'
 
     os.environ['MQ_URL'] = 'amqp://guest:guest@localhost:5672/'
     os.environ['MQ_QUEUE_NAME'] = 'my.test1.queue'
@@ -118,7 +118,7 @@ def find_migrations_script_location() -> str:
 
 
 @pytest.fixture(scope='session', params=(DefaultEventLoopPolicy(),))
-def event_loop_policy(request):
+def event_loop_policy(request: pytest.FixtureRequest) -> DefaultEventLoopPolicy:
     return request.param
 
 
@@ -126,7 +126,7 @@ class TestBaseDBClass:
     """Provides Test Class with a loaded database fixture"""
 
     @pytest.fixture(autouse=True)
-    def _a_provide_session(self, session: AsyncSession):
+    def _a_provide_session(self, session: AsyncSession) -> None:
         """
         Provides a database for all tests in class.
         The 'a' letter in the name required for loading these fixtures first, it's not good but ok for now.
@@ -142,7 +142,7 @@ class TestBaseClientClass:
         self,
         not_auth_client: AsyncClient,
         member_client: AsyncClient,
-    ):
+    ) -> None:
         """
         Provides a client for all tests in class.
         The 'a' letter in the name required for loading these fixtures first, it's not good but ok for now.
@@ -155,11 +155,11 @@ class TestBaseClientDBClass(TestBaseClientClass, TestBaseDBClass):
     """Provides Test Class with a loaded database and client fixture"""
 
 
-async def delete_all_objects(s3: S3Client, bucket_name: str):
+async def delete_all_objects(s3: S3Client, bucket_name: str) -> None:
     response = await s3.list_objects_v2(Bucket=bucket_name)
     if 'Contents' in response:
         objects = [{'Key': obj['Key']} for obj in response['Contents']]
-        await s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})
+        await s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})  # type: ignore[typeddict-item]
 
 
 @pytest.fixture(scope='session')
@@ -170,11 +170,18 @@ def s3_instance() -> Generator[MinioContainer, None, None]:
         yield minio
 
 
-@pytest.fixture(scope='function')
-async def s3_client(s3_instance) -> AsyncGenerator[S3Client, None]:
+@pytest.fixture(scope='session')
+async def s3_client(s3_instance: MinioContainer) -> AsyncGenerator[S3Client, None]:
+    # Get the dynamic connection configuration from the running container
+    port = s3_instance.get_exposed_port(9000)
+    url = os.environ['S3_LOCAL_HOST'].replace('9000', str(port))
+    settings = Settings(**get_settings().model_dump(exclude={'S3_LOCAL_HOST'}) | {'S3_LOCAL_HOST': url})
+
+    os.environ['S3_LOCAL_HOST'] = url
+
     session = get_aioboto_session()
     async with (
-        open_s3_client(session=session, settings=get_settings()) as s3_client,
+        open_s3_client(session=session, settings=settings) as s3_client,
     ):
         try:
             await delete_all_objects(s3_client, os.environ['S3_BUCKET'])

@@ -13,7 +13,7 @@ class _DepOverride:
     override: Callable
 
 
-def override_app_test_dependencies(app: FastAPI):
+def override_app_test_dependencies(app: FastAPI) -> None:
     deps: list[_DepOverride] = [
         _DepOverride(dependency=get_session, override=lambda: 'Fast Test drop if session is not set explicitly'),
     ]
