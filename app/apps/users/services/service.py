@@ -12,6 +12,7 @@ class UserService:
     async def get_user_by_email(self, email: EmailStr) -> UserSchema | None:
         if user := await self.user_repository.get_user_by_email(email):
             return UserSchema.model_validate(user)
+        return None
 
     async def create_user(self, user: UserCreateSchema) -> UserSchema:
         user_db = await self.user_repository.create(user)

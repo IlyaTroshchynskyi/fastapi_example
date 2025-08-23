@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from typing import AsyncGenerator
 
 from alembic.command import upgrade
 from fastapi import FastAPI
@@ -11,7 +12,7 @@ from app.core.infrastructure.brokers.rabbit_broker import get_broker
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     await startup(settings)
 
@@ -23,10 +24,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        await broker.close()
+        await broker.stop()
 
 
-async def run_consumer(settings: Settings): ...
+async def run_consumer(settings: Settings) -> None: ...
 
 
 async def startup(settings: Settings) -> None:

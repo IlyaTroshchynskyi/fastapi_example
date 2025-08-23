@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from typing import Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 import uuid
 
 from fastapi import Depends
@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import Base, get_session
 from app.core.exceptions import NotFoundError
 
-ModelType = TypeVar('ModelType', bound=Base, covariant=True)
+ModelType = TypeVar('ModelType', bound=Base)
 ReadSchemaType = TypeVar('ReadSchemaType', bound=BaseModel)
 CreateSchemaType = TypeVar('CreateSchemaType', bound=BaseModel)
 UpdateSchemaType = TypeVar('UpdateSchemaType', bound=BaseModel)
@@ -27,10 +27,10 @@ class BaseRepositoryProtocol(Protocol[ModelType]):
 
     async def update(self, update_object: UpdateSchemaType) -> ModelType: ...
 
-    async def delete(self, _id: uuid.UUID): ...
+    async def delete(self, _id: uuid.UUID) -> None: ...
 
 
-class BaseRepositoryImpl:
+class BaseRepositoryImpl(Generic[ModelType]):
     db_model: type[ModelType]
 
     def __init__(self, session: AsyncSession = Depends(get_session)):
@@ -68,6 +68,6 @@ class BaseRepositoryImpl:
         model = (await self.session.execute(query)).scalar_one()
         return model
 
-    async def delete(self, _id: int):
+    async def delete(self, _id: int) -> None:
         statement = delete(self.db_model).filter(_id == self.db_model.id).returning(self.db_model)
         await self.session.execute(statement)

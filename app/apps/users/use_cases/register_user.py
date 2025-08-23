@@ -35,7 +35,7 @@ class RegisterUserUseCase:
         await self._publish_message(broker, user_data)
         return new_user
 
-    async def _publish_message(self, broker: RabbitBroker, user_data: UserCreateSchema):
+    async def _publish_message(self, broker: RabbitBroker, user_data: UserCreateSchema) -> None:
         msg = UserCreationMsg(username=user_data.email, status=UserCreationStatus.SUCCESS)
         exc = get_user_creation_exchange()
         await broker.publish(msg, self._settings.MQ_QUEUE_NAME, exc)

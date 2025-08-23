@@ -14,9 +14,21 @@ lint:
 	ruff format
 	ruff check --fix
 
-
 lint-no-format:
 	ruff check
+	mypy --follow-imports=skip
+
+typecheck:
+	mypy --follow-imports=skip
+
+typecheck-report:
+	mypy --follow-imports=skip --html-report mypy-report
+
+typecheck-cache-clear:
+	rm -rf .mypy_cache
+
+typecheck-your-code-only:
+	mypy app --follow-imports=skip --ignore-missing-imports
 
 test:
 	coverage run -m pytest

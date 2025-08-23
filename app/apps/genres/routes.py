@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from app.apps.genres.schemas import GenreCreateUpdate, GenreSchema
 from app.apps.genres.services.service import GenreService
@@ -39,8 +39,8 @@ async def update_genre(genre_id: int, genre_input: GenreCreateUpdate, service: G
     return genre
 
 
-@router.delete('/genres/{genre_id}', status_code=204)
-async def delete_genre(genre_id: int, service: GenreService = Depends()):
+@router.delete('/genres/{genre_id}', status_code=204, response_class=Response)
+async def delete_genre(genre_id: int, service: GenreService = Depends()) -> None:
     try:
         await service.delete_genre(genre_id)
     except NotFoundError as e:
