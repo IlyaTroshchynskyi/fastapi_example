@@ -1,7 +1,7 @@
+from asyncio import DefaultEventLoopPolicy
 import os
 import pathlib
-from asyncio import DefaultEventLoopPolicy
-from typing import AsyncGenerator, Generator
+from typing import AsyncGenerator, Generator, Sequence
 from unittest.mock import AsyncMock
 
 from alembic.command import downgrade, upgrade
@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine, AsyncSession, create_async_engine
 from testcontainers.minio import MinioContainer
 from types_aiobotocore_s3 import S3Client
+from types_aiobotocore_s3.type_defs import ObjectIdentifierTypeDef
 
 from app.core.aws_boto_clients import get_aioboto_session, open_s3_client
 from app.core.config import get_settings, Settings
@@ -122,7 +123,6 @@ def event_loop_policy(request: pytest.FixtureRequest) -> DefaultEventLoopPolicy:
     return request.param
 
 
-
 class TestBaseDBClass:
     """Provides Test Class with a loaded database fixture"""
 
@@ -159,8 +159,8 @@ class TestBaseClientDBClass(TestBaseClientClass, TestBaseDBClass):
 async def delete_all_objects(s3: S3Client, bucket_name: str) -> None:
     response = await s3.list_objects_v2(Bucket=bucket_name)
     if 'Contents' in response:
-        objects = [{'Key': obj['Key']} for obj in response['Contents']]
-        await s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})  # type: ignore[typeddict-item]
+        objects: Sequence[ObjectIdentifierTypeDef] = [{'Key': obj['Key']} for obj in response['Contents']]
+        await s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})
 
 
 @pytest.fixture(scope='session')

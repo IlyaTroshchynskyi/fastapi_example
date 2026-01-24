@@ -35,6 +35,7 @@ dev = [
     "mypy>=1.8.0,<2.0.0",
     "lxml>=6.0.1",
     "pytest-asyncio>=1.1.0",
+    "ty>=0.0.13", # Todo decide what to use mypy or ty
 ]
 
 
@@ -142,3 +143,18 @@ module = "tests.*"
 disallow_untyped_defs = true    # Require type annotations for test functions
 disallow_incomplete_defs = true # Require complete type annotations in tests
 ignore_missing_imports = true   # Ignore missing imports in tests
+
+
+[tool.ty.rules]
+
+redundant-cast = "error"
+unused-ignore-comment = "warn"
+unresolved-import = "error"
+possibly-missing-import = "error"
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["app", "tests"]
+exclude = ["migrations/**", ".venv/**", "**/__pycache__/**"]

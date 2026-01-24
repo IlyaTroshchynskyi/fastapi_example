@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import lru_cache
-from typing import AsyncIterable
+from typing import AsyncGenerator, AsyncIterable
 
 from alembic.config import Config
 from pydantic import PostgresDsn
@@ -57,7 +57,7 @@ async def get_session() -> AsyncIterable[AsyncSession]:
 
 
 @asynccontextmanager
-async def get_managed_session() -> AsyncSession:
+async def get_managed_session() -> AsyncGenerator[AsyncSession, None]:
     factory: async_sessionmaker = async_session_factory()
     session: AsyncSession = factory()
     try:
