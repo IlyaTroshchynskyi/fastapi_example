@@ -1,6 +1,6 @@
 services:
   backend-database:
-    image: postgres
+    image: postgres:16 # Todo change to specific version later like in production
     volumes:
       - postgres:/var/lib/postgresql/example-data/
     environment:
@@ -10,7 +10,7 @@ services:
     ports:
       - "5436:5432"
   backend-test-database:
-    image: postgres
+    image: postgres:16
     environment:
       - "POSTGRES_USER=test_postgres"
       - "POSTGRES_PASSWORD=test_postgres"

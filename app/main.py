@@ -1,8 +1,8 @@
 import logging
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
+from starlette.middleware.cors import CORSMiddleware
 
 from app.apps.consumers.user_creation_consumer import router as user_creation_consumer_router
 from app.apps.genres.routes import router as genres_router
@@ -28,12 +28,13 @@ def create_app() -> FastAPI:
     _app.include_router(user_creation_consumer_router)
 
     _app.add_middleware(
-        CORSMiddleware,
+        CORSMiddleware,  # ty: ignore[invalid-argument-type]
         allow_origins=['*'],
         allow_credentials=True,
         allow_methods=['*'],
         allow_headers=['*'],
     )
+
     add_pagination(_app)
 
     return _app

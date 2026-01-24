@@ -7,10 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import Base, get_session
+from app.core.database import get_session, MixinsBase
 from app.core.exceptions import NotFoundError
 
-ModelType = TypeVar('ModelType', bound=Base)
+ModelType = TypeVar('ModelType', bound=MixinsBase)
 ReadSchemaType = TypeVar('ReadSchemaType', bound=BaseModel)
 CreateSchemaType = TypeVar('CreateSchemaType', bound=BaseModel)
 UpdateSchemaType = TypeVar('UpdateSchemaType', bound=BaseModel)
@@ -37,7 +37,7 @@ class BaseRepositoryImpl(Generic[ModelType]):
         self.session = session
 
     async def get_by_id(self, _id: int) -> ModelType:
-        query = select(self.db_model).filter(_id == self.db_model.id)
+        query = select(self.db_model).filter(self.db_model.id == _id)
         model = (await self.session.execute(query)).scalar_one_or_none()
         if model is None:
             raise NotFoundError(f'Entity with id {_id} not found for model {self.db_model.__name__}')
@@ -62,12 +62,12 @@ class BaseRepositoryImpl(Generic[ModelType]):
         query = (
             update(self.db_model)
             .values(update_object.model_dump(exclude_unset=True))
-            .filter(_id == self.db_model.id)
+            .filter(self.db_model.id == _id)
             .returning(self.db_model)
         )
         model = (await self.session.execute(query)).scalar_one()
         return model
 
     async def delete(self, _id: int) -> None:
-        statement = delete(self.db_model).filter(_id == self.db_model.id).returning(self.db_model)
+        statement = delete(self.db_model).filter(self.db_model.id == _id).returning(self.db_model)
         await self.session.execute(statement)

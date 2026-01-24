@@ -30,6 +30,9 @@ typecheck-cache-clear:
 typecheck-your-code-only:
 	mypy app --follow-imports=skip --ignore-missing-imports
 
+run_ty:
+	uv run ty check --output-format concise --exclude "migrations/**"
+
 test:
 	coverage run -m pytest
 	coverage report
