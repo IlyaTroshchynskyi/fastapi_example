@@ -28,9 +28,9 @@ def create_app() -> FastAPI:
     _app.include_router(user_creation_consumer_router)
 
     _app.add_middleware(
-        CORSMiddleware,  # ty: ignore[invalid-argument-type]
-        allow_origins=['*'],
-        allow_credentials=True,
+        CORSMiddleware,
+        allow_origins=list(settings.CORS_ORIGINS),
+        allow_credentials=settings.CORS_ALLOW_CREDENTIALS,
         allow_methods=['*'],
         allow_headers=['*'],
     )

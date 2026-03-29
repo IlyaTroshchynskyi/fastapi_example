@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from faststream.rabbit import RabbitBroker
 from httpx import ASGITransport, AsyncClient
 import pytest
+import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncEngine, AsyncSession, create_async_engine
 from testcontainers.minio import MinioContainer
 from types_aiobotocore_s3 import S3Client
@@ -47,7 +48,7 @@ def pytest_configure(config: pytest.Config) -> None:
     os.environ['MQ_DLQ_NAME'] = 'dlq.my.test1.queue'
 
 
-@pytest.fixture(scope='session')
+@pytest_asyncio.fixture(scope='session', loop_scope='session')
 async def app() -> AsyncGenerator[FastAPI, None]:
     from app.main import create_app
 
@@ -57,13 +58,13 @@ async def app() -> AsyncGenerator[FastAPI, None]:
     yield _app
 
 
-@pytest.fixture(scope='session')
+@pytest_asyncio.fixture(scope='session', loop_scope='session')
 async def not_auth_client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
     async with AsyncClient(transport=ASGITransport(app=app), base_url=TEST_HOST) as client:
         yield client
 
 
-@pytest.fixture(scope='session')
+@pytest_asyncio.fixture(scope='session', loop_scope='session')
 async def member_client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
     token = 'token'
     async with AsyncClient(
@@ -92,7 +93,7 @@ async def session(app: FastAPI, _engine: AsyncEngine) -> AsyncGenerator[AsyncSes
         await connection.close()
 
 
-@pytest.fixture(scope='session', autouse=True)
+@pytest_asyncio.fixture(scope='session', loop_scope='session', autouse=True)
 async def _engine() -> AsyncGenerator[AsyncEngine, None]:
     settings = get_settings()
 

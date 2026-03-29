@@ -7,7 +7,7 @@ args: ClassicQueueArgs = {
     'x-max-length': 1000,
     'x-dead-letter-exchange': '',
     'x-dead-letter-routing-key': get_settings().MQ_DLQ_NAME,
-}  # type: ignore[assignment]
+}
 
 q_test = RabbitQueue(
     get_settings().MQ_QUEUE_NAME,
