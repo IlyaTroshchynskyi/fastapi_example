@@ -1,6 +1,10 @@
-# Unit tests (GitHub Copilot)
+---
+description: Pytest, polyfactory, factories, and API test conventions
+globs: tests/**/*.py
+alwaysApply: false
+---
 
-Canonical copy for Cursor: [.cursor/rules/pytest-testing.mdc](../.cursor/rules/pytest-testing.mdc). Keep this file aligned when you change conventions.
+# Unit and integration tests
 
 - Prefer parametrized tests to reduce duplication and improve coverage.
 - Follow the same code style and conventions as the rest of the project.

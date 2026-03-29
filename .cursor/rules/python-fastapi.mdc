@@ -1,6 +1,9 @@
-# Python and FastAPI (GitHub Copilot)
+---
+description: Python/FastAPI, Pydantic v2, SQLAlchemy, and project conventions
+alwaysApply: true
+---
 
-Canonical copy for Cursor: [.cursor/rules/python-fastapi.mdc](../.cursor/rules/python-fastapi.mdc). Keep this file aligned when you change conventions.
+# Python and FastAPI conventions
 
 - Apply available patterns and describe where and why they were used.
 - Use modern Python syntax matching the project (`requires-python` is 3.12+; use 3.12-compatible features unless the target version is raised).
