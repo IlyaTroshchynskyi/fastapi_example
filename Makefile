@@ -35,7 +35,7 @@ run_ty:
 
 test:
 	coverage run -m pytest
-	coverage report
+	coverage report --fail-under=70
 
 test-no-coverage:
 	pytest

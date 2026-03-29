@@ -1,5 +1,5 @@
 Should apply available patterns and describe where and why it was used
-Should use new syntaxis for python3.13
+Should use modern Python syntax matching the project (requires-python is 3.12+; use 3.12-compatible features unless the target version is raised)
 Should use StrEnum for enums
 Should use list instead of List for typehints
 Should use class ConfigDict in pydantic models and use syntaxis of pydantic version 2.0. Should be placed after all fields
@@ -17,4 +17,4 @@ Don't create migrations manually
 The field length must be a multiple of 2
 Should follow the same structure as existing files in the project
 Should use f-strings for string formatting
-Should use queries instead of ORM in SQLAlchemy
+Should use SQLAlchemy the same way as existing code: async sessions, models, and repository-style access; use `text()` or Core only where the codebase already does for a specific case

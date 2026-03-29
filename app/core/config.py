@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import PostgresDsn
+from pydantic import Field, field_validator, PostgresDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.enums import Environment
@@ -11,6 +11,14 @@ class Settings(BaseSettings):
     ROOT_PATH: str = '/path'  # need for api gateway
     ENVIRONMENT: Environment = Environment.LOCAL
     RUN_CONSUMER: bool = True
+
+    CORS_ORIGINS: list[str] = Field(
+        default_factory=lambda: [
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+        ],
+    )
+    CORS_ALLOW_CREDENTIALS: bool = True
 
     DATABASE_URL: PostgresDsn
 
@@ -30,6 +38,13 @@ class Settings(BaseSettings):
 
     RUN_MIGRATIONS: bool = False
 
+    @field_validator('CORS_ORIGINS', mode='before')
+    @classmethod
+    def parse_cors_origins(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(',') if item.strip()]
+        return value
+
     model_config = SettingsConfigDict(
         case_sensitive=True,
         frozen=True,
@@ -39,4 +54,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()  # type: ignore
+    return Settings()
