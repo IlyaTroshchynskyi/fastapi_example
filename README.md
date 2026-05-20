@@ -57,6 +57,17 @@ The app listens on port **8005** with reload (see `makefile`). The bundled `Dock
 
 Tests expect Postgres on `localhost:5437`, RabbitMQ on `localhost:5672`, and use Testcontainers for MinIO where needed. Run `docker compose up -d` before `make test` so those services are available.
 
+## Claude Code
+
+The `.claude/` directory is committed to this repository as a reference. It contains:
+
+- `CLAUDE.md` — project guidance loaded automatically by Claude Code
+- `skills/` — reusable prompt patterns (repository, service, testing, etc.)
+- `agents/` — specialist subagent definitions (tech lead, reviewer, orchestrator, etc.)
+- `rules/` — coding rules applied across all agents
+
+Feel free to use, adapt, or extend these for your own projects.
+
 ## Pre-commit
 
 Install hooks once per clone:
