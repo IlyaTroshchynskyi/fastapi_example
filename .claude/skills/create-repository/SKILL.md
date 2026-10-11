@@ -8,7 +8,7 @@ description: Create a SQLAlchemy async repository following the project's canoni
 ## Canonical base class
 
 All repositories extend `BaseRepositoryImpl` from `app.core.repositories.base_repository`.
-That class provides `get_by_id`, `get_by_ids`, `get_all`, `create`, `update`, and `delete` out of the box via SQLAlchemy Core with `RETURNING`.
+That class provides `get_by_id`, `list_by_ids`, `list_all`, `create`, `update`, and `delete` out of the box via SQLAlchemy Core with `RETURNING`.
 
 ```python
 from app.apps.<domain>.models import <Model>
@@ -33,7 +33,7 @@ Operations use SQLAlchemy Core with `RETURNING` — not the ORM `add / flush / r
 
 ```python
 # create (from base — do not repeat this in subclasses)
-query = insert(self.db_model).values(**create_object.model_dump()).returning(self.db_model)
+query = insert(self.db_model).values(**entity_creation.model_dump()).returning(self.db_model)
 model = (await self.session.execute(query)).scalar_one()
 return self.read_schema_type.model_validate(model)
 ```
@@ -56,7 +56,7 @@ class <Model>Repository(BaseRepositoryImpl[<Model>, <ModelReadSchema>]):
     db_model = <Model>
     read_schema_type = <ModelReadSchema>
 
-    async def get_by_name(self, name: str) -> <ModelReadSchema> | None:
+    async def find_by_name(self, name: str) -> <ModelReadSchema> | None:
         query = select(self.db_model).where(self.db_model.name == name)
         model = (await self.session.execute(query)).scalar_one_or_none()
         if model is None:
@@ -82,7 +82,7 @@ Always build the query in a named `query` variable before calling `execute()`. T
 
 ```python
 # CORRECT
-async def get_active_by_status(self, _id: int, status: GenreStatus) -> GenreSchema | None:
+async def find_active_by_id(self, _id: int) -> GenreSchema | None:
     query = (
         select(self.db_model)
         .where(
@@ -93,13 +93,15 @@ async def get_active_by_status(self, _id: int, status: GenreStatus) -> GenreSche
         )
         .limit(1)
     )
-    result = await self.session.execute(query)
-    return result.scalar_one_or_none()
+    model = (await self.session.execute(query)).scalar_one_or_none()
+    if model is None:
+        return None
+    return self.read_schema_type.model_validate(model)
 
 # WRONG — inline query, hard to read and extend
-async def get_active_by_status(self, _id: int, status: GenreStatus) -> GenreSchema | None:
-    result = await self.session.execute(select(self.db_model).where(...).limit(1))
-    return result.scalar_one_or_none()
+async def find_active_by_id(self, _id: int) -> GenreSchema | None:
+    model = (await self.session.execute(select(self.db_model).where(...).limit(1))).scalar_one_or_none()
+    return self.read_schema_type.model_validate(model) if model else None
 ```
 
 For conditional filters, build `query` as a base and chain further:
@@ -116,10 +118,10 @@ if status:
 
 | Goal | Method |
 |---|---|
-| Single row, required | `result.scalar_one()` — raises if 0 or >1 rows |
-| Single row, optional | `result.scalar_one_or_none()` — returns `None` if not found |
-| All rows | `result.scalars().all()` |
-| Scalar aggregate | `result.scalar_one()` on `select(func.count(...))` |
+| Single row, required | `query_result.scalar_one()` — raises if 0 or >1 rows |
+| Single row, optional | `query_result.scalar_one_or_none()` — returns `None` if not found |
+| All rows | `query_result.scalars().all()` |
+| Scalar aggregate | `query_result.scalar_one()` on `select(func.count(...))` |
 
 Raise `NotFoundError` (from `app.core.exceptions`) when a required record is absent — the base `get_by_id` already does this; follow the same pattern in custom methods.
 
@@ -133,10 +135,10 @@ Use `model_dump(exclude_unset=True)` so only explicitly provided fields are writ
 from sqlalchemy import update
 from app.apps.<domain>.schemas import <ModelUpdateSchema>
 
-async def partial_update(self, _id: int, data: <ModelUpdateSchema>) ->   <ModelReadSchema>:
+async def update_partially(self, _id: int, entity_update: <ModelUpdateSchema>) -> <ModelReadSchema>:
     query = (
         update(self.db_model)
-        .values(data.model_dump(exclude_unset=True))
+        .values(entity_update.model_dump(exclude_unset=True))
         .where(self.db_model.id == _id)
         .returning(self.db_model)
     )
@@ -155,22 +157,20 @@ Pick the loader by relationship shape and how many parents you load:
 | Relationship | Loading context | Use |
 |---|---|---|
 | many-to-one (to-one) | any | `joinedload` — one round-trip via LEFT OUTER JOIN |
-| one-to-many / many-to-many | single parent | `selectinload` |
-| one-to-many / many-to-many | multiple parents (lists, paginated) | `selectinload` — avoids row duplication on LIMIT |
+| one-to-many / many-to-many | single parent or multiple parents (lists, paginated) | `selectinload` — avoids row duplication on LIMIT |
 
 **Many-to-one (to-one) — `joinedload`** (one round-trip via LEFT OUTER JOIN):
 
 ```python
 from sqlalchemy.orm import joinedload
 
-async def get_with_tags(self, _id: int) -> ItemSchema:
+async def get_with_category(self, _id: int) -> ProductSchema:
     query = (
         select(self.db_model)
-        .options(joinedload(self.db_model.tags))
+        .options(joinedload(self.db_model.category))
         .where(self.db_model.id == _id)
     )
-    result = await self.session.execute(query)
-    model = result.scalar_one_or_none()
+    model = (await self.session.execute(query)).scalar_one_or_none()
     if model is None:
         raise NotFoundError(f'Entity with id {_id} not found for model {self.db_model.__name__}')
     return self.read_schema_type.model_validate(model)
@@ -182,7 +182,7 @@ async def get_with_tags(self, _id: int) -> ItemSchema:
 from pydantic import TypeAdapter
 from sqlalchemy.orm import selectinload, joinedload
 
-async def list_with_relations(self) -> list[ItemSchema]:
+async def list_with_relations(self) -> list[ProductSchema]:
     query = (
         select(self.db_model)
         .options(selectinload(self.db_model.tags))       # one-to-many → selectinload
@@ -199,11 +199,14 @@ async def list_with_relations(self) -> list[ItemSchema]:
 
 | Prefix | Returns | Description |
 |---|---|---|
-| `get_by_` | `Schema \| None` | Fetch a single optional record |
-| `list_` | `list[Schema]` | Fetch multiple records |
+| `get_by_id` (base), `get_` | `Schema` | Fetch a required record — raises `NotFoundError` if absent |
+| `find_` | `Schema \| None` | Fetch a single optional record |
+| `list_all`, `list_by_ids` (base), `list_` | `list[Schema]` | Fetch multiple records |
 | `create` | `Schema` | Insert and return via RETURNING |
 | `update` | `Schema` | Mutate and return via RETURNING |
-| `delete` | `None` | Delete (base raises if not found first) |
+| `delete` | `None` | Delete — base does not check existence; the service calls `get_by_id` first when a missing record must raise |
+
+The verbs come from `.claude/rules/naming.md`.
 
 ---
 

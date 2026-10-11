@@ -17,7 +17,7 @@ make lint-no-format           # ruff check (no write) + mypy
 make typecheck                # mypy only
 
 make test                     # pytest with coverage (requires docker compose up -d)
-pytest tests/api/test_users.py::TestUsersAPI::test_create_user   # run a single test
+pytest tests/api/test_users.py::TestCreateUsers::test_user_registered   # run a single test
 
 uv run pre-commit install     # install hooks once per clone
 ```

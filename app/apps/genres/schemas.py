@@ -7,7 +7,7 @@ class GenreCreateSchema(BaseModel):
     name: str = Field(max_length=32)
 
 
-class GenreCreateUpdate(GenreCreateSchema):
+class GenreUpdateSchema(GenreCreateSchema):
     pass
 
 

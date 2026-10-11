@@ -40,10 +40,10 @@ class Settings(BaseSettings):
 
     @field_validator('CORS_ORIGINS', mode='before')
     @classmethod
-    def parse_cors_origins(cls, value: object) -> object:
-        if isinstance(value, str):
-            return [item.strip() for item in value.split(',') if item.strip()]
-        return value
+    def parse_cors_origins(cls, raw_origins: object) -> object:
+        if isinstance(raw_origins, str):
+            return [origin.strip() for origin in raw_origins.split(',') if origin.strip()]
+        return raw_origins
 
     model_config = SettingsConfigDict(
         case_sensitive=True,

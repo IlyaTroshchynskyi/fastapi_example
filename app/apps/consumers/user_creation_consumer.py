@@ -6,9 +6,9 @@ import time
 from aio_pika import IncomingMessage
 from faststream.rabbit.fastapi import RabbitBroker, RabbitMessage, RabbitRouter
 
-from app.apps.consumers.exchanges import get_user_creation_exchange
-from app.apps.consumers.queues import dlq_q_test, q_test
-from app.apps.consumers.schemas import UserCreationMsg
+from app.apps.consumers.exchanges import build_user_creation_exchange
+from app.apps.consumers.queues import user_creation_dead_letter_queue, user_creation_queue
+from app.apps.consumers.schemas import UserCreationMessage
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -18,31 +18,33 @@ logger.setLevel(logging.INFO)
 router = RabbitRouter(get_settings().MQ_URL)
 
 
-@router.subscriber(q_test, get_user_creation_exchange())
-async def handle_user_creation_msg(body: UserCreationMsg, msg: RabbitMessage) -> None:
-    raw: IncomingMessage = msg.raw_message
-    logger.info('[EMAIL] Received message: %r (delivery_tag=%s)', body, raw.delivery_tag)
+@router.subscriber(user_creation_queue, build_user_creation_exchange())
+async def consume_user_creation_message(
+    user_creation_message: UserCreationMessage, rabbit_message: RabbitMessage
+) -> None:
+    raw_message: IncomingMessage = rabbit_message.raw_message
+    logger.info('[EMAIL] Received message: %r (delivery_tag=%s)', user_creation_message, raw_message.delivery_tag)
 
     start_time = time.time()
     await asyncio.sleep(random.uniform(0.1, 1.0))
     should_fail = random.random() < 0.5
 
     if should_fail:
-        logger.error('Failed to process %r, pushing to DLQ', body)
-        await msg.reject(requeue=False)
+        logger.error('Failed to process %r, pushing to DLQ', user_creation_message)
+        await rabbit_message.reject(requeue=False)
         return
 
     end_time = time.time()
-    logger.info('Processed in %.2fs - acking %r', end_time - start_time, body)
-    await msg.ack()
+    logger.info('Processed in %.2fs - acking %r', end_time - start_time, user_creation_message)
+    await rabbit_message.ack()
 
 
 @router.after_startup
 async def setup_infrastructure(_: RabbitBroker) -> None:
-    await declare_queue(router.broker)
+    await declare_user_creation_topology(router.broker)
 
 
-async def declare_queue(broker: RabbitBroker) -> None:
-    await broker.declare_exchange(get_user_creation_exchange())
-    await broker.declare_queue(q_test)
-    await broker.declare_queue(dlq_q_test)
+async def declare_user_creation_topology(broker: RabbitBroker) -> None:
+    await broker.declare_exchange(build_user_creation_exchange())
+    await broker.declare_queue(user_creation_queue)
+    await broker.declare_queue(user_creation_dead_letter_queue)

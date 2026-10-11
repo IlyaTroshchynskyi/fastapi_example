@@ -9,6 +9,6 @@ class UserCreationStatus(StrEnum):
     NOT_CONFIRMED = 'not_confirmed'
 
 
-class UserCreationMsg(BaseModel):
+class UserCreationMessage(BaseModel):
     username: EmailStr
     status: UserCreationStatus

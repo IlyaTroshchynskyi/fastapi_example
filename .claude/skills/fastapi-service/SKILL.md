@@ -1,6 +1,6 @@
 ---
 name: fastapi-service
-description: Use when creating or modifying a FastAPI feature module — services, routers, schemas, use cases, or enums — in this codebase. Apply to all new feature work.
+description: Defines the layered structure and conventions of a FastAPI feature module in this codebase. Use when creating or modifying a FastAPI feature module — services, routers, schemas, use cases, or enums — in this codebase. Apply to all new feature work.
 ---
 
 # FastAPI Feature Service Pattern
@@ -26,6 +26,22 @@ Add `use_cases/` only when a route orchestrates multiple services (e.g. create u
 
 ---
 
+## New Feature Checklist
+
+Copy this checklist and tick items off as you go:
+
+- [ ] `models.py` — model extends `MixinsBase`
+- [ ] `make migration MSG='...'` — never write migrations by hand; confirm the generated revision contains exactly the expected changes, then `make migrate`
+- [ ] `schemas.py` — request and response schemas
+- [ ] `repository.py` — see `create-repository` skill
+- [ ] `services/service.py` — business logic, domain exceptions only
+- [ ] `use_cases/` — only if a route coordinates multiple services
+- [ ] `routes.py` — thin controllers; router registered in `app/main.py`
+- [ ] Tests in `tests/api/test_<domain>.py` — see `testing-rules-styles` skill
+- [ ] `make lint` → `make lint-no-format` → `make test` (needs `docker compose up -d`); fix and re-run until all three pass
+
+---
+
 ## Service Layer
 
 Inject dependencies via FastAPI's `Depends()` in `__init__`. Store as attributes (private for external collaborators, public for the repository).
@@ -45,17 +61,18 @@ class <Domain>Service:
     ) -> None:
         self.<domain>_repository = <domain>_repository
 
-    async def get_all(self) -> list[<Domain>Schema]:
-        return await self.<domain>_repository.get_all()
+    async def list_<domains>(self) -> list[<Domain>Schema]:
+        return await self.<domain>_repository.list_all()
 
-    async def get_by_id(self, _id: int) -> <Domain>Schema:
+    async def get_<domain>_by_id(self, _id: int) -> <Domain>Schema:
         return await self.<domain>_repository.get_by_id(_id)
 
-    async def create(self, data: <Domain>CreateSchema) -> <Domain>Schema:
-        return await self.<domain>_repository.create(data)
+    async def create_<domain>(self, <domain>_creation: <Domain>CreateSchema) -> <Domain>Schema:
+        return await self.<domain>_repository.create(<domain>_creation)
 ```
 
 Rules:
+- Method names follow `.claude/rules/naming.md`: `list_<domains>`, `get_<domain>_by_id` (raises `NotFoundError`), `find_<domain>_by_<field>` (may return `None`), `create_<domain>`, `update_<domain>`, `delete_<domain>`
 - Always `async`
 - Raise domain exceptions only (`NotFoundError`, `AlreadyExistError` from `app.core.exceptions`) — **never `HTTPException`**, never `from fastapi import ...`
 - Return typed Pydantic schemas
@@ -72,30 +89,34 @@ from fastapi import Depends
 from faststream.rabbit import RabbitBroker
 from app.apps.<domain>.schemas import <Domain>CreateSchema, <Domain>Schema
 from app.apps.<domain>.services.service import <Domain>Service
+from app.core.config import get_settings, Settings
 from app.core.exceptions import AlreadyExistError
+from app.core.services.ses import SesEmailSenderService
 
 
 class Register<Domain>UseCase:
     def __init__(
         self,
-        service: <Domain>Service = Depends(),
+        <domain>_service: <Domain>Service = Depends(),
         notification_service: SesEmailSenderService = Depends(),
         settings: Settings = Depends(get_settings),
     ) -> None:
-        self._service = service
+        self._<domain>_service = <domain>_service
         self._notification_service = notification_service
         self._settings = settings
 
-    async def execute(self, data: <Domain>CreateSchema, broker: RabbitBroker) -> <Domain>Schema:
-        existing = await self._service.get_by_email(data.email)
-        if existing:
+    async def execute(self, <domain>_creation: <Domain>CreateSchema, broker: RabbitBroker) -> <Domain>Schema:
+        existing_<domain> = await self._<domain>_service.find_<domain>_by_email(<domain>_creation.email)
+        if existing_<domain>:
             raise AlreadyExistError('Already registered')
-        result = await self._service.create(data)
+        new_<domain> = await self._<domain>_service.create_<domain>(<domain>_creation)
         await self._notification_service.send_email(...)
-        await self._publish(broker, data)
-        return result
+        await self._publish_<domain>_creation_message(broker, <domain>_creation)
+        return new_<domain>
 
-    async def _publish(self, broker: RabbitBroker, data: <Domain>CreateSchema) -> None:
+    async def _publish_<domain>_creation_message(
+        self, broker: RabbitBroker, <domain>_creation: <Domain>CreateSchema
+    ) -> None:
         ...
 ```
 
@@ -113,7 +134,7 @@ class Register<Domain>UseCase:
 
 ```python
 from fastapi import APIRouter, Depends, HTTPException, Response
-from app.apps.<domain>.schemas import <Domain>CreateUpdate, <Domain>Schema
+from app.apps.<domain>.schemas import <Domain>CreateSchema, <Domain>Schema, <Domain>UpdateSchema
 from app.apps.<domain>.services.service import <Domain>Service
 from app.core.exceptions import AlreadyExistError, NotFoundError
 
@@ -121,41 +142,43 @@ router = APIRouter(tags=['<Domain>'])
 
 
 @router.get('/<domains>')
-async def list_items(service: <Domain>Service = Depends()) -> list[<Domain>Schema]:
-    return await service.get_all()
+async def list_<domains>(service: <Domain>Service = Depends()) -> list[<Domain>Schema]:
+    return await service.list_<domains>()
 
 
-@router.get('/<domains>/{item_id}')
-async def get_item(item_id: int, service: <Domain>Service = Depends()) -> <Domain>Schema:
+@router.get('/<domains>/{<domain>_id}')
+async def get_<domain>_by_id(<domain>_id: int, service: <Domain>Service = Depends()) -> <Domain>Schema:
     try:
-        return await service.get_by_id(item_id)
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        return await service.get_<domain>_by_id(<domain>_id)
+    except NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
 
 
 @router.post('/<domains>', status_code=201)
-async def create_item(body: <Domain>CreateUpdate, service: <Domain>Service = Depends()) -> <Domain>Schema:
-    return await service.create(body)
+async def create_<domain>(
+    <domain>_creation: <Domain>CreateSchema, service: <Domain>Service = Depends()
+) -> <Domain>Schema:
+    return await service.create_<domain>(<domain>_creation)
 
 
-@router.put('/<domains>/{item_id}')
-async def update_item(
-    item_id: int, body: <Domain>CreateUpdate, service: <Domain>Service = Depends()
+@router.put('/<domains>/{<domain>_id}')
+async def update_<domain>(
+    <domain>_id: int, <domain>_update: <Domain>UpdateSchema, service: <Domain>Service = Depends()
 ) -> <Domain>Schema:
     try:
-        return await service.update(body, item_id)
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except AlreadyExistError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        return await service.update_<domain>(<domain>_update, <domain>_id)
+    except NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
+    except AlreadyExistError as error:
+        raise HTTPException(status_code=409, detail=str(error))
 
 
-@router.delete('/<domains>/{item_id}', status_code=204, response_class=Response)
-async def delete_item(item_id: int, service: <Domain>Service = Depends()) -> None:
+@router.delete('/<domains>/{<domain>_id}', status_code=204, response_class=Response)
+async def delete_<domain>(<domain>_id: int, service: <Domain>Service = Depends()) -> None:
     try:
-        await service.delete(item_id)
-    except NotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        await service.delete_<domain>(<domain>_id)
+    except NotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error))
 ```
 
 Register the router in `app/main.py` via `_app.include_router(...)`.
@@ -173,7 +196,7 @@ class <Domain>CreateSchema(BaseModel):
     name: str = Field(max_length=64)  # max_length must be a multiple of 2
 
 
-class <Domain>CreateUpdate(<Domain>CreateSchema):
+class <Domain>UpdateSchema(<Domain>CreateSchema):
     pass
 
 
@@ -187,7 +210,7 @@ class <Domain>Schema(BaseModel):
 ```
 
 - `model_config = ConfigDict(from_attributes=True)` on response schemas
-- `Field(default=None)` not `...` for required fields with constraints
+- Optional fields: `field: str | None = Field(default=None)`. Required constrained fields: `field: str = Field(max_length=64)`. Never use `...` as a positional default
 - String column lengths must be a multiple of 2
 
 ---
@@ -197,6 +220,7 @@ class <Domain>Schema(BaseModel):
 All models extend `MixinsBase` (provides `id`, `created_at`, `updated_at`):
 
 ```python
+from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.database import MixinsBase
 
@@ -216,7 +240,7 @@ All enums in `app/core/enums.py` (project-wide) or the domain's `enums.py` if do
 ```python
 from enum import StrEnum
 
-class ItemStatus(StrEnum):
+class GenreStatus(StrEnum):
     ACTIVE = 'active'
     INACTIVE = 'inactive'
 ```
@@ -251,4 +275,4 @@ Does app.core.exceptions already express this error?
 ## Common Mistakes
 
 - **Forgetting `response_class=Response` on DELETE**: Without it FastAPI tries to serialize `None` and may 500.
-- **Using `Exception` base for cross-cutting errors**: Prefer `core/exceptions.py` — the global handler already speaks that language.
+- **Using `Exception` base for cross-cutting errors**: Prefer `core/exceptions.py` — routers already map those exceptions to `HTTPException` (there is no global exception handler in `app/main.py`).

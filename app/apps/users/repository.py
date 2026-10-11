@@ -10,7 +10,7 @@ class UserRepository(BaseRepositoryImpl[UserModel, UserSchema]):
     db_model = UserModel
     read_schema_type = UserSchema
 
-    async def get_user_by_email(self, email: EmailStr) -> UserSchema | None:
+    async def find_by_email(self, email: EmailStr) -> UserSchema | None:
         query = select(UserModel).filter_by(email=email)
         model = (await self.session.execute(query)).scalar_one_or_none()
         if model is None:

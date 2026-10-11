@@ -34,7 +34,7 @@ class MixinsBase(Base):
 
 
 @lru_cache
-def async_engine() -> AsyncEngine:
+def get_async_engine() -> AsyncEngine:
     settings = get_settings()
     return create_async_engine(
         settings.DATABASE_URL.unicode_string(),
@@ -43,9 +43,9 @@ def async_engine() -> AsyncEngine:
 
 
 @lru_cache
-def async_session_factory() -> async_sessionmaker:
+def get_async_session_factory() -> async_sessionmaker:
     return async_sessionmaker(
-        bind=async_engine(),
+        bind=get_async_engine(),
         autoflush=False,
         expire_on_commit=False,
     )
@@ -58,8 +58,8 @@ async def get_session() -> AsyncIterable[AsyncSession]:
 
 @asynccontextmanager
 async def get_managed_session() -> AsyncGenerator[AsyncSession, None]:
-    factory: async_sessionmaker = async_session_factory()
-    session: AsyncSession = factory()
+    session_factory: async_sessionmaker = get_async_session_factory()
+    session: AsyncSession = session_factory()
     try:
         yield session
     except Exception as e:
