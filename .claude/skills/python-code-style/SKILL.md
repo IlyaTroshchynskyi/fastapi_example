@@ -11,6 +11,8 @@ Rules for writing production-quality Python in this codebase. Every rule reflect
 
 **Related skills:** `fastapi-service`, `create-repository`.
 
+**Code examples** for type narrowing, generics with `TypeVar`, and early returns: [general-practices.md](general-practices.md).
+
 ---
 
 ## Type Hints
@@ -27,7 +29,7 @@ class GenreService:
     ) -> None:
         self.genre_repository = genre_repository
 
-    async def get_genre_by_id(self, _id: int) -> GenreSchema | None:
+    async def get_genre_by_id(self, _id: int) -> GenreSchema:
         ...
 ```
 
@@ -35,22 +37,11 @@ class GenreService:
 
 Use early returns or guards to narrow `X | None` before use. The type checker tracks narrowed types through the rest of the scope.
 
-```python
-# Good — type checker knows genre is GenreSchema after the guard
-async def get_genre_by_id(self, _id: int) -> GenreSchema | None:
-    genre = await self.genre_repository.get_by_id(_id)
-    if genre is None:
-        raise NotFoundError(f'Genre with id {_id} not found')
-    # here: genre is GenreSchema, not GenreSchema | None
-    return genre
-
-# Filter None from a list — result is narrowed to list[GenreSchema]
-valid_genres = [g for g in genres if g is not None]
-```
+Example: [general-practices.md](general-practices.md).
 
 ### Type Aliases
 
-Create meaningful names for complex types. Use `TypeAlias` (Python 3.10+) — never the `type X = ...` statement syntax (that requires Python 3.12).
+Create meaningful names for complex types. Use `TypeAlias` — never the `type X = ...` statement syntax (new in Python 3.12; avoided for consistency).
 
 ```python
 from typing import TypeAlias
@@ -63,20 +54,7 @@ AsyncHandler: TypeAlias = Callable[[Request], Awaitable[Response]]
 
 Use `TypeVar` + `Generic` when writing reusable containers or helpers that must preserve the type of their contents.
 
-```python
-from typing import TypeVar, Generic
-from pydantic import BaseModel
-
-T = TypeVar('T')
-ModelT = TypeVar('ModelT', bound=BaseModel)
-
-# Bound TypeVar — restricts to BaseModel subclasses
-def validate_and_create(model_cls: type[ModelT], data: dict) -> ModelT:
-    return model_cls.model_validate(data)
-
-# Usage — genre is typed as GenreSchema, not BaseModel
-genre = validate_and_create(GenreSchema, {'id': 1, 'name': 'Rock'})
-```
+Example: [general-practices.md](general-practices.md).
 
 ---
 
@@ -88,40 +66,41 @@ ABC provides nominal typing: subclasses must explicitly inherit and implement ev
 
 ```python
 from abc import ABC, abstractmethod
-from typing import TypeVar, Generic
 
-T = TypeVar('T')
-ID = TypeVar('ID')
 
-class BaseRepository(ABC, Generic[T, ID]):
-    """Abstract base for all repositories."""
+class BaseFileStorage(ABC):
+    """Abstract base for all file storages."""
 
     @abstractmethod
-    async def get_by_id(self, id: ID) -> T | None: ...
+    async def upload(self, key: str, content: bytes) -> None: ...
 
     @abstractmethod
-    async def create(self, entity: T) -> T: ...
+    async def download(self, key: str) -> bytes: ...
 
     @abstractmethod
-    async def delete(self, id: ID) -> None: ...
+    async def delete(self, key: str) -> None: ...
 
 
-class GenreRepository(BaseRepository[GenreSchema, int]):
-    def __init__(self, session: AsyncSession = Depends(get_session)) -> None:
-        self.session = session
+class S3FileStorage(BaseFileStorage):
+    def __init__(
+        self,
+        client: Annotated[S3Client, Depends(get_s3_client)],
+        settings: Annotated[Settings, Depends(get_settings)],
+    ) -> None:
+        self._client = client
+        self._bucket_name = settings.S3_BUCKET
 
-    async def get_by_id(self, id: int) -> GenreSchema | None:
-        query = select(GenreModel).where(GenreModel.id == id)
-        result = await self.session.execute(query)
-        model = result.scalar_one_or_none()
-        return GenreSchema.model_validate(model) if model else None
+    async def upload(self, key: str, content: bytes) -> None:
+        await self._client.put_object(Bucket=self._bucket_name, Key=key, Body=content)
 
-    async def create(self, entity: GenreSchema) -> GenreSchema:
+    async def download(self, key: str) -> bytes:
         ...
 
-    async def delete(self, id: int) -> None:
+    async def delete(self, key: str) -> None:
         ...
 ```
+
+Concrete repositories are not written against a hand-made ABC — they extend `BaseRepositoryImpl` (see `create-repository`).
 
 **Why ABC over Protocol:**
 - Nominal inheritance makes the contract explicit and IDE-navigable
@@ -148,13 +127,13 @@ class GenreRepository(BaseRepository[GenreSchema, int]):
 
 ```python
 # async — touches the DB
-async def get_all_genres(self) -> list[GenreSchema]:
-    return await self.genre_repository.get_all()
+async def list_genres(self) -> list[GenreSchema]:
+    return await self.genre_repository.list_all()
 
 # sync — pure computation, no I/O
 @staticmethod
-def _normalize_name(raw: str) -> str:
-    return raw.strip().lower()
+def _normalize_name(raw_name: str) -> str:
+    return raw_name.strip().lower()
 ```
 
 **Never:**
@@ -176,7 +155,7 @@ class EmailMessage(BaseModel):
     body: str
 
 # Bad — shape is known but caller passes raw dict
-async def send_email(self, data: dict) -> None: ...
+async def send_email(self, message: dict) -> None: ...
 ```
 
 ---
@@ -215,7 +194,7 @@ class GenreService:
     def __init__(self, ...) -> None: ...
 
     # 2. public async methods  ← business API
-    async def get_all_genres(self, ...) -> list[GenreSchema]: ...
+    async def list_genres(self, ...) -> list[GenreSchema]: ...
     async def create_genre(self, ...) -> GenreSchema: ...
 
     # ── private helpers below ──────────────────────────────
@@ -224,7 +203,7 @@ class GenreService:
 
     # 4. static helpers — always at the BOTTOM
     @staticmethod
-    def _normalize_name(raw: str) -> str: ...
+    def _normalize_name(raw_name: str) -> str: ...
 ```
 
 Module-level constants go **above** the class, never embedded in methods:
@@ -240,22 +219,7 @@ DEFAULT_PAGE_SIZE = 20
 
 Exit the function the moment you know the answer. Never nest the happy path inside `if not error`.
 
-```python
-# Good
-async def update_genre(self, genre: GenreCreateUpdate, _id: int) -> GenreSchema:
-    current = await self.get_genre_by_id(_id)
-    if current.name == genre.name:
-        raise AlreadyExistError('Genre exists with such name')
-    return await self.genre_repository.update(genre, _id)
-
-# Bad — nesting delays the error path
-async def update_genre(self, genre: GenreCreateUpdate, _id: int) -> GenreSchema:
-    current = await self.get_genre_by_id(_id)
-    if current.name != genre.name:
-        return await self.genre_repository.update(genre, _id)
-    else:
-        raise AlreadyExistError('Genre exists with such name')
-```
+Example: [general-practices.md](general-practices.md).
 
 ---
 
@@ -263,15 +227,15 @@ async def update_genre(self, genre: GenreCreateUpdate, _id: int) -> GenreSchema:
 
 - Raise specific domain exceptions at the first violation — never return `None` as an error signal
 - Never swallow errors with `except Exception: pass`
-- Chain exceptions: `raise DomainError(...) from exc` to preserve cause
+- Chain exceptions: `raise DomainError(...) from error` to preserve cause
 - Never log sensitive user data — log opaque IDs (`user_id`, `genre_id`), never names, emails, or raw payloads
 
 ```python
 # Good
 try:
     await self._s3_client.upload(key, content)
-except ClientError as exc:
-    raise ServiceError(f'S3 upload failed for key {key}') from exc
+except ClientError as error:
+    raise ServiceError(f'S3 upload failed for key {key}') from error
 
 # Bad — hides the cause
 try:
@@ -287,6 +251,8 @@ except Exception:
 Inject every collaborator through the constructor. Never instantiate services, repositories, or clients inside a class body.
 
 In this project, DI is wired via `Annotated[..., Depends(...)]` directly in service `__init__` — no separate `dependencies.py` file per domain.
+
+The one exception is LangGraph agent wiring in `agents/<name>/dependencies.py` (see `langchain-agent`).
 
 ```python
 # Good — DI through constructor
@@ -307,7 +273,7 @@ class GenreService:
 
 ## Self-Documenting Code
 
-Name things so the code reads like the business domain. Comments explain *why*, never *what*.
+Name things so the code reads like the business domain. Comments explain *why*, never *what*. The naming rules themselves are in `.claude/rules/naming.md`.
 
 ```python
 # Good name — no comment needed
@@ -315,7 +281,7 @@ async def _validate_unique_genre_name(self, name: str) -> None: ...
 
 # Narrates the obvious
 # Check if genre exists
-existing = await self.genre_repository.get_by_name(name)
+existing_genre = await self.genre_repository.find_by_name(name)
 ```
 
 **Do comment the non-obvious:**
@@ -323,7 +289,7 @@ existing = await self.genre_repository.get_by_name(name)
 ```python
 # No retry: if broker publish fails, the DB transaction still commits.
 # The consumer is idempotent and handles re-delivery from the dead-letter queue.
-await broker.publish(msg, self._settings.MQ_QUEUE_NAME, exchange)
+await broker.publish(message, self._settings.MQ_QUEUE_NAME, exchange)
 ```
 
 ---
@@ -369,6 +335,8 @@ Every function belongs somewhere specific:
 
 ---
 
+## Type Hints Checklist
+
 Incremental adoption checklist:
 - [ ] All function parameters annotated
 - [ ] All return types annotated
@@ -406,8 +374,8 @@ Priority order — apply the first applicable rule:
 | Write `except Exception: pass` | Fail Fast — never swallow errors |
 | Create `utils.py` / `helpers.py` | No Utils Modules — find the right home |
 | Put private methods before `__init__` or public methods | Class Layout — public API first |
-| Embed a magic number inside a method body | Module-Level Constants — define above the class |
+| Embed a magic number inside a method body | Class Layout — module-level constants go above the class |
 | Log sensitive user data (email, name, payload) | Fail Fast — log opaque IDs only |
 | Add a comment that narrates what the next line does | Self-Documenting Code — rename instead |
-| Use bare `list` / `dict` in a type annotation | Generics — always parametrize: `list[str]`, `dict[str, int]` |
+| Use bare `list` / `dict` in a type annotation | Type Hints Checklist — always parametrize: `list[str]`, `dict[str, int]` |
 | Write `type X = ...` syntax | Type Aliases — use `TypeAlias` (`type X = ...` is Python 3.12+ new syntax — avoid for consistency) |

@@ -8,17 +8,17 @@ from app.core.database import get_session
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
-class _DepOverride:
+class _DependencyOverride:
     dependency: Callable
     override: Callable
 
 
 def override_app_test_dependencies(app: FastAPI) -> None:
-    deps: list[_DepOverride] = [
-        _DepOverride(dependency=get_session, override=lambda: 'Fast Test drop if session is not set explicitly'),
+    dependency_overrides: list[_DependencyOverride] = [
+        _DependencyOverride(dependency=get_session, override=lambda: 'Fast Test drop if session is not set explicitly'),
     ]
-    for dep in deps:
-        override_dependency(app, dep.dependency, dep.override)
+    for dependency_override in dependency_overrides:
+        override_dependency(app, dependency_override.dependency, dependency_override.override)
 
 
 def override_dependency(app: FastAPI, dependency: Callable, override: Callable) -> None:

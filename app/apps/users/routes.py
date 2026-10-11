@@ -10,13 +10,13 @@ router = APIRouter(tags=['Users'])
 
 
 @router.post('/users', status_code=201)
-async def create_users(
+async def create_user(
     user_creation: UserCreateSchema,
-    service: RegisterUserUseCase = Depends(),
+    register_user_use_case: RegisterUserUseCase = Depends(),
     broker: RabbitBroker = Depends(get_rabbit_broker),
 ) -> UserSchema:
     try:
-        user = await service.execute(user_creation, broker)
-    except AlreadyExistError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+        user = await register_user_use_case.execute(user_creation, broker)
+    except AlreadyExistError as error:
+        raise HTTPException(status_code=409, detail=str(error))
     return user

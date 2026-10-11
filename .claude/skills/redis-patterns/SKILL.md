@@ -1,25 +1,60 @@
 ---
 name: redis-patterns
-description: Redis data structure patterns, caching strategies, distributed locks, rate limiting, pub/sub, and connection management for production applications.
-user-invocable: true
+description: Provides Redis data structure patterns, caching strategies, distributed locks, rate limiting, pub/sub, and connection management for production applications, adapted to this codebase's dependency injection. Use when adding caching to an application, implementing rate limiting or throttling, building distributed locks or coordination, setting up session or token storage, using Pub/Sub or Redis Streams for messaging, or configuring Redis in production (pooling, eviction, clustering).
 ---
 
 # Redis Patterns
 
 Quick reference for Redis best practices across common backend use cases.
 
-## How It Works
+**Related skills:** `python-code-style`, `fastapi-service`.
 
-Redis is an in-memory data structure store that supports strings, hashes, lists, sets, sorted sets, streams, and more. Individual Redis commands are atomic on a single instance; multi-step workflows require Lua scripts, MULTI/EXEC transactions, or explicit synchronization to stay atomic. Data is optionally persisted via RDB snapshots or AOF logs. Clients communicate over TCP using the RESP protocol; connection pools are essential to avoid per-request handshake overhead.
+**Production deployment** — Cluster Mode, Sentinel, eviction policies: [operations.md](operations.md).
 
-## When to Activate
+## Project Integration
 
-- Adding caching to an application
-- Implementing rate limiting or throttling
-- Building distributed locks or coordination
-- Setting up session or token storage
-- Using Pub/Sub or Redis Streams for messaging
-- Configuring Redis in production (pooling, eviction, clustering)
+Redis is not wired into this codebase yet. Before the first use:
+
+- Install the client: `uv add redis`
+- Add `REDIS_URL: RedisDsn` to `Settings` in `app/core/config.py`
+- Create the client once in an `@lru_cache` factory and inject that factory directly with `Depends(get_redis_client)`, the same way `get_settings` and `get_aioboto_session` are injected. Never create a module-level `Redis(...)`, and never add an accessor dependency that reads the client from `request.app.state`
+- In `app/lifespan.py`: `await get_redis_client().aclose()` in `finally`. Nothing is needed before `yield` — connections open on the first command
+
+```python
+# app/core/infrastructure/redis/redis_client.py
+from functools import lru_cache
+
+from redis.asyncio import Redis
+
+from app.core.config import get_settings
+
+
+@lru_cache
+def get_redis_client() -> Redis:
+    settings = get_settings()
+    return Redis.from_url(
+        settings.REDIS_URL.unicode_string(),
+        max_connections=20,  # connection pool size
+        decode_responses=True,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
+```
+
+Services receive the client through the constructor:
+
+```python
+class ProductCacheService:
+    def __init__(
+        self,
+        redis: Annotated[Redis, Depends(get_redis_client)],
+        product_repository: Annotated[ProductRepository, Depends(ProductRepository)],
+    ) -> None:
+        self._redis = redis
+        self._product_repository = product_repository
+```
+
+Every snippet below is a method of a service built this way: `self._redis` is the injected client. TTLs and Lua scripts are module-level constants above the class. Values are serialized through Pydantic schemas (`model_dump_json` / `model_validate_json`), not raw `dict` + `json`.
 
 ## Data Structure Cheat Sheet
 
@@ -39,80 +74,79 @@ Redis is an in-memory data structure store that supports strings, hashes, lists,
 ### Cache-Aside (Lazy Loading)
 
 ```python
-import json
-from redis.asyncio import Redis
+PRODUCT_CACHE_TTL_SECONDS = 3600  # 1 hour
 
-r = Redis(host='localhost', port=6379, decode_responses=True)
 
-async def get_product(product_id: int):
-    cache_key = f"product:{product_id}"
-    cached = await r.get(cache_key)
+async def get_product(self, product_id: int) -> ProductSchema:
+    cache_key = f'product:{product_id}'
+    cached_product = await self._redis.get(cache_key)
+    if cached_product is not None:
+        return ProductSchema.model_validate_json(cached_product)
 
-    if cached:
-        return json.loads(cached)
-
-    product = await db.fetch_one("SELECT * FROM products WHERE id = $1", product_id)
-    await r.setex(cache_key, 3600, json.dumps(product))  # TTL: 1 hour
+    product = await self._product_repository.get_by_id(product_id)
+    await self._redis.setex(cache_key, PRODUCT_CACHE_TTL_SECONDS, product.model_dump_json())
     return product
 ```
 
 ### Write-Through Cache
 
 ```python
-async def update_product(product_id: int, data: dict):
+async def update_product(self, product_id: int, product_update: ProductUpdateSchema) -> ProductSchema:
     # Write to DB first
-    await db.execute("UPDATE products SET ... WHERE id = $1", product_id)
+    product = await self._product_repository.update(product_update, product_id)
 
     # Immediately update cache
-    cache_key = f"product:{product_id}"
-    await r.setex(cache_key, 3600, json.dumps(data))
+    await self._redis.setex(f'product:{product_id}', PRODUCT_CACHE_TTL_SECONDS, product.model_dump_json())
+    return product
 ```
 
 ### Cache Invalidation
 
 ```python
 # Tag-based invalidation — group related keys under a set
-async def cache_product(product_id: int, category_id: int, data: dict):
-    key = f"product:{product_id}"
-    tag = f"tag:category:{category_id}"
-    async with r.pipeline(transaction=True) as pipe:
-        await pipe.setex(key, 3600, json.dumps(data))
-        await pipe.sadd(tag, key)
-        await pipe.expire(tag, 3600)
-        await pipe.execute()
+async def cache_product(self, product: ProductSchema) -> None:
+    key = f'product:{product.id}'
+    tag = f'tag:category:{product.category_id}'
+    async with self._redis.pipeline(transaction=True) as pipeline:
+        await pipeline.setex(key, PRODUCT_CACHE_TTL_SECONDS, product.model_dump_json())
+        await pipeline.sadd(tag, key)
+        await pipeline.expire(tag, PRODUCT_CACHE_TTL_SECONDS)
+        await pipeline.execute()
 
-async def invalidate_category(category_id: int):
-    tag = f"tag:category:{category_id}"
-    keys = await r.smembers(tag)
+async def invalidate_category(self, category_id: int) -> None:
+    tag = f'tag:category:{category_id}'
+    keys = await self._redis.smembers(tag)
     if keys:
-        await r.delete(*keys)
-    await r.delete(tag)
+        await self._redis.delete(*keys)
+    await self._redis.delete(tag)
 ```
 
 ### Session Storage
 
 ```python
-import time
-import uuid
+SESSION_TTL_SECONDS = 86400  # 24 hours
 
-async def create_session(user_id: int, ttl: int = 86400) -> str:
+
+class SessionSchema(BaseModel):
+    user_id: int
+    created_at: int
+
+
+async def create_session(self, user_id: int, ttl_seconds: int = SESSION_TTL_SECONDS) -> str:
     session_id = str(uuid.uuid4())
-    key = f"session:{session_id}"
-    async with r.pipeline(transaction=True) as pipe:
-        await pipe.hset(key, mapping={
-            "user_id": user_id,
-            "created_at": int(time.time()),
-        })
-        await pipe.expire(key, ttl)
-        await pipe.execute()
+    key = f'session:{session_id}'
+    async with self._redis.pipeline(transaction=True) as pipeline:
+        await pipeline.hset(key, mapping={'user_id': user_id, 'created_at': int(time.time())})
+        await pipeline.expire(key, ttl_seconds)
+        await pipeline.execute()
     return session_id
 
-async def get_session(session_id: str) -> dict | None:
-    data = await r.hgetall(f"session:{session_id}")
-    return data if data else None
+async def find_session(self, session_id: str) -> SessionSchema | None:
+    session_fields = await self._redis.hgetall(f'session:{session_id}')
+    return SessionSchema.model_validate(session_fields) if session_fields else None
 
-async def delete_session(session_id: str) -> None:
-    await r.delete(f"session:{session_id}")
+async def delete_session(self, session_id: str) -> None:
+    await self._redis.delete(f'session:{session_id}')
 ```
 
 ## Rate Limiting
@@ -120,13 +154,13 @@ async def delete_session(session_id: str) -> None:
 ### Fixed Window (Simple)
 
 ```python
-async def is_rate_limited(user_id: int, limit: int = 100, window: int = 60) -> bool:
-    key = f"ratelimit:{user_id}:{int(time.time()) // window}"
-    async with r.pipeline(transaction=True) as pipe:
-        await pipe.incr(key)
-        await pipe.expire(key, window)
-        count, _ = await pipe.execute()
-    return count > limit
+async def is_rate_limited(self, user_id: int, limit: int = 100, window_seconds: int = 60) -> bool:
+    key = f'ratelimit:{user_id}:{int(time.time()) // window_seconds}'
+    async with self._redis.pipeline(transaction=True) as pipeline:
+        await pipeline.incr(key)
+        await pipeline.expire(key, window_seconds)
+        request_count, _ = await pipeline.execute()
+    return request_count > limit
 ```
 
 ### Sliding Window (Lua — Atomic)
@@ -134,33 +168,36 @@ async def is_rate_limited(user_id: int, limit: int = 100, window: int = 60) -> b
 ```lua
 -- sliding_window.lua
 local key = KEYS[1]
-local now = tonumber(ARGV[1])
-local window = tonumber(ARGV[2])
+local now_ms = tonumber(ARGV[1])
+local window_ms = tonumber(ARGV[2])
 local limit = tonumber(ARGV[3])
 
-redis.call('ZREMRANGEBYSCORE', key, 0, now - window)
-local count = redis.call('ZCARD', key)
+redis.call('ZREMRANGEBYSCORE', key, 0, now_ms - window_ms)
+local request_count = redis.call('ZCARD', key)
 
-if count < limit then
+if request_count < limit then
     -- Use unique member (now + sequence) to avoid collisions within the same millisecond
-    local seq_key = key .. ':seq'
-    local seq = redis.call('INCR', seq_key)
-    redis.call('EXPIRE', seq_key, math.ceil(window / 1000))
-    redis.call('ZADD', key, now, now .. '-' .. seq)
-    redis.call('EXPIRE', key, math.ceil(window / 1000))
+    local sequence_key = key .. ':seq'
+    local sequence = redis.call('INCR', sequence_key)
+    redis.call('EXPIRE', sequence_key, math.ceil(window_ms / 1000))
+    redis.call('ZADD', key, now_ms, now_ms .. '-' .. sequence)
+    redis.call('EXPIRE', key, math.ceil(window_ms / 1000))
     return 1
 end
 return 0
 ```
 
-```python
-SLIDING_WINDOW_SCRIPT = open('sliding_window.lua').read()
+Keep the script next to the service module and load it once, resolved relative to the module — not the working directory:
 
-async def allow_request(user_id: int) -> bool:
-    key = f"ratelimit:sliding:{user_id}"
-    now = int(time.time() * 1000)
-    result = await r.eval(SLIDING_WINDOW_SCRIPT, 1, key, now, 60000, 100)
-    return bool(result)
+```python
+SLIDING_WINDOW_SCRIPT = Path(__file__).with_name('sliding_window.lua').read_text()
+
+
+async def allow_request(self, user_id: int, limit: int = 100, window_ms: int = 60000) -> bool:
+    key = f'ratelimit:sliding:{user_id}'
+    now_ms = int(time.time() * 1000)
+    is_allowed = await self._redis.eval(SLIDING_WINDOW_SCRIPT, 1, key, now_ms, window_ms, limit)
+    return bool(is_allowed)
 ```
 
 ## Distributed Locks
@@ -168,32 +205,31 @@ async def allow_request(user_id: int) -> bool:
 ### Distributed Lock (Single Node — SET NX PX)
 
 ```python
-import uuid
+LOCK_RELEASE_SCRIPT = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    return redis.call('del', KEYS[1])
+else
+    return 0
+end
+"""
 
-async def acquire_lock(resource: str, ttl_ms: int = 5000) -> str | None:
-    lock_key = f"lock:{resource}"
+
+async def acquire_lock(self, resource: str, ttl_ms: int = 5000) -> str | None:
     token = str(uuid.uuid4())
-    acquired = await r.set(lock_key, token, px=ttl_ms, nx=True)
-    return token if acquired else None
+    is_acquired = await self._redis.set(f'lock:{resource}', token, px=ttl_ms, nx=True)
+    return token if is_acquired else None
 
-async def release_lock(resource: str, token: str) -> bool:
-    release_script = """
-    if redis.call('get', KEYS[1]) == ARGV[1] then
-        return redis.call('del', KEYS[1])
-    else
-        return 0
-    end
-    """
-    result = await r.eval(release_script, 1, f"lock:{resource}", token)
-    return bool(result)
+async def release_lock(self, resource: str, token: str) -> bool:
+    is_released = await self._redis.eval(LOCK_RELEASE_SCRIPT, 1, f'lock:{resource}', token)
+    return bool(is_released)
 
 # Usage
-token = await acquire_lock("order:payment:123")
+token = await self.acquire_lock('order:payment:123')
 if token:
     try:
-        await process_payment()
+        await self._process_payment()
     finally:
-        await release_lock("order:payment:123", token)
+        await self.release_lock('order:payment:123', token)
 ```
 
 > For multi-node setups use the `redlock-py` library which implements the full Redlock algorithm.
@@ -204,39 +240,43 @@ if token:
 
 ```python
 # Publisher
-async def publish_event(channel: str, payload: dict) -> None:
-    await r.publish(channel, json.dumps(payload))
+async def publish_event(self, channel: str, event: EventSchema) -> None:
+    await self._redis.publish(channel, event.model_dump_json())
 
 # Subscriber — run as a background task (e.g. asyncio.create_task)
-async def subscribe_events(channel: str) -> None:
-    async with r.pubsub() as pubsub:
+async def subscribe_events(self, channel: str) -> None:
+    async with self._redis.pubsub() as pubsub:
         await pubsub.subscribe(channel)
         async for message in pubsub.listen():
             if message['type'] == 'message':
-                await handle(json.loads(message['data']))
+                await self._send_notification(EventSchema.model_validate_json(message['data']))
 ```
 
 ### Redis Streams (Durable Queue)
 
 ```python
 # Producer
-async def emit(stream: str, event: dict) -> None:
-    await r.xadd(stream, event, maxlen=10000)  # Cap stream length
+async def append_event(self, stream: str, event_fields: dict[str, str]) -> None:
+    await self._redis.xadd(stream, event_fields, maxlen=10000)  # Cap stream length
 
 # Consumer group — guarantees at-least-once delivery
-try:
-    await r.xgroup_create('events:orders', 'processor', id='0', mkstream=True)
-except Exception:
-    pass  # Group already exists
+async def create_consumer_group_if_missing(self, stream: str, group: str) -> None:
+    try:
+        await self._redis.xgroup_create(stream, group, id='0', mkstream=True)
+    except ResponseError as error:
+        if 'BUSYGROUP' not in str(error):  # BUSYGROUP = group already exists; anything else is a real error
+            raise
 
-async def consume(stream: str, group: str, consumer: str) -> None:
+async def consume_events(self, stream: str, group: str, consumer: str) -> None:
     while True:
-        messages = await r.xreadgroup(group, consumer, {stream: '>'}, count=10, block=2000)
-        for _, entries in (messages or []):
-            for msg_id, data in entries:
-                await process(data)
-                await r.xack(stream, group, msg_id)
+        stream_batches = await self._redis.xreadgroup(group, consumer, {stream: '>'}, count=10, block=2000)
+        for _, entries in stream_batches or []:
+            for entry_id, event_fields in entries:
+                await self._apply_event(event_fields)
+                await self._redis.xack(stream, group, entry_id)
 ```
+
+`ResponseError` comes from `redis.exceptions`.
 
 > Prefer **Streams** over Pub/Sub when you need delivery guarantees, consumer groups, or replay.
 
@@ -271,63 +311,6 @@ stats:pageviews:2024-01-01
 
 Always set a TTL. Keys without TTL accumulate indefinitely and cause memory pressure.
 
-## Connection Management
-
-### Connection Pooling
-
-```python
-from redis.asyncio import Redis, ConnectionPool
-
-pool = ConnectionPool(
-    host='localhost',
-    port=6379,
-    db=0,
-    max_connections=20,
-    decode_responses=True,
-    socket_connect_timeout=2,
-    socket_timeout=2,
-)
-
-r = Redis(connection_pool=pool)
-```
-
-### Cluster Mode
-
-```python
-from redis.asyncio.cluster import RedisCluster
-
-r = RedisCluster(
-    startup_nodes=[{"host": "redis-1", "port": 6379}],
-    decode_responses=True,
-    skip_full_coverage_check=True,
-)
-```
-
-### Sentinel (High Availability)
-
-```python
-from redis.asyncio.sentinel import Sentinel
-
-sentinel = Sentinel(
-    [('sentinel-1', 26379), ('sentinel-2', 26379)],
-    socket_timeout=0.5,
-)
-master = sentinel.master_for('mymaster', decode_responses=True)
-replica = sentinel.slave_for('mymaster', decode_responses=True)
-```
-
-## Eviction Policies
-
-| Policy | Behavior | Best For |
-|--------|----------|----------|
-| `noeviction` | Error on write when full | Queues / critical data |
-| `allkeys-lru` | Evict least recently used | General cache |
-| `volatile-lru` | LRU only among keys with TTL | Mixed data store |
-| `allkeys-lfu` | Evict least frequently used | Skewed access patterns |
-| `volatile-ttl` | Evict soonest-to-expire | Prioritize long-lived data |
-
-Set via `redis.conf`: `maxmemory-policy allkeys-lru`
-
 ## Anti-Patterns
 
 | Anti-Pattern | Problem | Fix |
@@ -339,49 +322,55 @@ Set via `redis.conf`: `maxmemory-policy allkeys-lru`
 | Ignoring connection pool limits | Connection exhaustion under load | Size pool to workload |
 | Not handling cache miss stampede | Thundering herd on cold start | Use locks or probabilistic early expiry |
 | `FLUSHALL` without thought | Wipes entire instance | Scope deletes by key pattern |
+| Module-level `Redis(...)` or lock registry | Global state — breaks DI and does not work across workers | Inject the client via `Depends(get_redis_client)`; lock in Redis |
 
 ### Cache Miss Stampede Prevention
 
+Uses `acquire_lock`/`release_lock` from the Distributed Locks section above, so it also holds across multiple workers. Pick the lock TTL above the expected `load_value` duration.
+
 ```python
-import asyncio
+STAMPEDE_RETRY_DELAY_SECONDS = 0.05
 
-_locks: dict[str, asyncio.Lock] = {}
-_locks_mutex = asyncio.Lock()
 
-async def get_with_lock(key: str, fetch_fn, ttl: int = 300):
-    cached = await r.get(key)
-    if cached:
-        return json.loads(cached)
+async def get_or_load_value(
+    self, key: str, load_value: Callable[[], Awaitable[str]], ttl_seconds: int = 300
+) -> str:
+    cached_value = await self._redis.get(key)
+    if cached_value is not None:
+        return cached_value
 
-    async with _locks_mutex:
-        if key not in _locks:
-            _locks[key] = asyncio.Lock()
-        lock = _locks[key]
+    token = await self.acquire_lock(key)
+    while token is None:  # another worker is rebuilding the value — wait and re-read
+        await asyncio.sleep(STAMPEDE_RETRY_DELAY_SECONDS)
+        cached_value = await self._redis.get(key)
+        if cached_value is not None:
+            return cached_value
+        token = await self.acquire_lock(key)
 
-    async with lock:
-        cached = await r.get(key)  # Re-check after acquiring lock
-        if cached:
-            return json.loads(cached)
-        value = await fetch_fn()
-        await r.setex(key, ttl, json.dumps(value))
-        return value
+    try:
+        cached_value = await self._redis.get(key)  # Re-check after acquiring lock
+        if cached_value is not None:
+            return cached_value
+        loaded_value = await load_value()
+        await self._redis.setex(key, ttl_seconds, loaded_value)
+        return loaded_value
+    finally:
+        await self.release_lock(key, token)
 ```
-
-> For multi-process deployments, replace the in-process lock with `acquire_lock`/`release_lock` from the Distributed Locks section above.
 
 ## Examples
 
 **Add caching to a FastAPI endpoint:**
-Use cache-aside with `await r.setex(...)` and a 5-minute TTL on the response. Key on the request parameters. Never cache responses containing raw PHI — cache opaque IDs or safe aggregate data only.
+Use cache-aside with `await self._redis.setex(...)` and a 5-minute TTL on the response. Key on the request parameters. Never cache responses containing raw PHI or other sensitive user data (emails, names, raw payloads) — cache opaque IDs or safe aggregate data only.
 
 **Rate-limit an API by user:**
-Use fixed-window with `async with r.pipeline(transaction=True)` for low-traffic endpoints; use sliding-window Lua with `await r.eval(...)` for accurate per-user throttling.
+Use fixed-window with `async with self._redis.pipeline(transaction=True)` for low-traffic endpoints; use sliding-window Lua with `await self._redis.eval(...)` for accurate per-user throttling.
 
 **Coordinate a background job across workers:**
-Use `await acquire_lock(...)` with a TTL that exceeds the expected job duration. Always release in a `finally` block.
+Use `await self.acquire_lock(...)` with a TTL that exceeds the expected job duration. Always release in a `finally` block.
 
 **Fan-out notifications to multiple subscribers:**
-Use `async with r.pubsub()` for fire-and-forget. Switch to Streams with `await r.xreadgroup(...)` if you need guaranteed delivery or replay for late consumers.
+Use `async with self._redis.pubsub()` for fire-and-forget. Switch to Streams with `await self._redis.xreadgroup(...)` if you need guaranteed delivery or replay for late consumers.
 
 ## Quick Reference
 

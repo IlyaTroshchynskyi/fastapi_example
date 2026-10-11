@@ -22,6 +22,8 @@ from app.core.infrastructure.brokers.dependencies import get_rabbit_broker
 from tests.dependencies import override_app_test_dependencies, override_dependency
 
 TEST_HOST = 'http://test'
+# testcontainers defaults to minio/minio, which MinIO deleted from Docker Hub in September 2026.
+MINIO_IMAGE = 'cgr.dev/chainguard/minio:latest'
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -76,7 +78,7 @@ async def member_client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
 @pytest.fixture(scope='function')
 async def session(app: FastAPI, _engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
     connection = await _engine.connect()
-    trans = await connection.begin()
+    transaction = await connection.begin()
 
     session_factory = async_sessionmaker(connection, expire_on_commit=False)
     session = session_factory()
@@ -88,7 +90,7 @@ async def session(app: FastAPI, _engine: AsyncEngine) -> AsyncGenerator[AsyncSes
     try:
         yield session
     finally:
-        await trans.rollback()
+        await transaction.rollback()
         await session.close()
         await connection.close()
 
@@ -99,22 +101,22 @@ async def _engine() -> AsyncGenerator[AsyncEngine, None]:
 
     from app.core.database import get_alembic_config
 
-    alembic_config = get_alembic_config(settings.DATABASE_URL, script_location=find_migrations_script_location())
+    alembic_config = get_alembic_config(settings.DATABASE_URL, script_location=build_migrations_script_location())
 
     engine = create_async_engine(settings.DATABASE_URL.unicode_string())
     async with engine.begin() as connection:
-        await connection.run_sync(lambda conn: downgrade(alembic_config, 'base'))
-        await connection.run_sync(lambda conn: upgrade(alembic_config, 'head'))
+        await connection.run_sync(lambda sync_connection: downgrade(alembic_config, 'base'))
+        await connection.run_sync(lambda sync_connection: upgrade(alembic_config, 'head'))
 
     try:
         yield engine
     finally:
         async with engine.begin() as connection:
-            await connection.run_sync(lambda conn: downgrade(alembic_config, 'base'))
+            await connection.run_sync(lambda sync_connection: downgrade(alembic_config, 'base'))
         await engine.dispose()
 
 
-def find_migrations_script_location() -> str:
+def build_migrations_script_location() -> str:
     """Help find script location if tests was run by debugger or any other way except writing 'pytest' in cli"""
     return os.path.join(pathlib.Path(os.path.dirname(os.path.realpath(__file__))).parent, 'migrations')
 
@@ -157,16 +159,18 @@ class TestBaseClientDBClass(TestBaseClientClass, TestBaseDBClass):
     """Provides Test Class with a loaded database and client fixture"""
 
 
-async def delete_all_objects(s3: S3Client, bucket_name: str) -> None:
-    response = await s3.list_objects_v2(Bucket=bucket_name)
+async def delete_all_objects(s3_client: S3Client, bucket_name: str) -> None:
+    response = await s3_client.list_objects_v2(Bucket=bucket_name)
     if 'Contents' in response:
-        objects: Sequence[ObjectIdentifierTypeDef] = [{'Key': obj['Key']} for obj in response['Contents']]
-        await s3.delete_objects(Bucket=bucket_name, Delete={'Objects': objects})
+        object_identifiers: Sequence[ObjectIdentifierTypeDef] = [
+            {'Key': s3_object['Key']} for s3_object in response['Contents']
+        ]
+        await s3_client.delete_objects(Bucket=bucket_name, Delete={'Objects': object_identifiers})
 
 
 @pytest.fixture(scope='session')
 def s3_instance() -> Generator[MinioContainer, None, None]:
-    with MinioContainer(access_key='access_key', secret_key='access_key') as minio:
+    with MinioContainer(image=MINIO_IMAGE, access_key='access_key', secret_key='access_key') as minio:
         minio_client = minio.get_client()
         minio_client.make_bucket(os.environ['S3_BUCKET'])
         yield minio
@@ -176,10 +180,10 @@ def s3_instance() -> Generator[MinioContainer, None, None]:
 async def s3_client(s3_instance: MinioContainer) -> AsyncGenerator[S3Client, None]:
     # Get the dynamic connection configuration from the running container
     port = s3_instance.get_exposed_port(9000)
-    url = os.environ['S3_LOCAL_HOST'].replace('9000', str(port))
-    settings = Settings(**get_settings().model_dump(exclude={'S3_LOCAL_HOST'}) | {'S3_LOCAL_HOST': url})
+    minio_endpoint_url = os.environ['S3_LOCAL_HOST'].replace('9000', str(port))
+    settings = Settings(**get_settings().model_dump(exclude={'S3_LOCAL_HOST'}) | {'S3_LOCAL_HOST': minio_endpoint_url})
 
-    os.environ['S3_LOCAL_HOST'] = url
+    os.environ['S3_LOCAL_HOST'] = minio_endpoint_url
 
     session = get_aioboto_session()
     async with (
